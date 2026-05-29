@@ -8,27 +8,31 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 
     <!-- 改成你的杀戮尖塔2目录 -->
-    <Sts2Dir>E:\SteamLibrary\steamapps\common\Slay the Spire 2</Sts2Dir>
-    <Sts2DataDir>$(Sts2Dir)\data_sts2_windows_x86_64</Sts2DataDir>
+    <Sts2AppId>2868840</Sts2AppId>
+    <Sts2InstallDirName>Slay the Spire 2</Sts2InstallDirName>
+    <SteamLibraryPath Condition="'$(SteamLibraryPath)' == '' and '$(HOME)' != ''">$(HOME)/.local/share/Steam/steamapps</SteamLibraryPath>
+    <Sts2Path Condition="'$(Sts2Path)' == '' and '$(SteamLibraryPath)' != '' and Exists('$(SteamLibraryPath)/common/$(Sts2InstallDirName)')">$(SteamLibraryPath)/common/$(Sts2InstallDirName)</Sts2Path>
+    <Sts2Dir Condition="'$(Sts2Dir)' == ''">$(Sts2Path)</Sts2Dir>
+    <Sts2DataDir Condition="'$(Sts2DataDir)' == '' and '$(Sts2Dir)' != ''">$(Sts2Dir)/data_sts2_windows_x86_64</Sts2DataDir>
   </PropertyGroup>
 
   <ItemGroup>
     <Reference Include="sts2">
-      <HintPath>$(Sts2DataDir)\sts2.dll</HintPath>
+      <HintPath>$(Sts2DataDir)/sts2.dll</HintPath>
       <Private>false</Private>
     </Reference>
 
     <Reference Include="0Harmony">
-      <HintPath>$(Sts2DataDir)\0Harmony.dll</HintPath>
+      <HintPath>$(Sts2DataDir)/0Harmony.dll</HintPath>
       <Private>false</Private>
     </Reference>
   </ItemGroup>
 
   <!-- 自动复制dll和json -->
-  <Target Name="Copy Mod" AfterTargets="PostBuildEvent">
+  <Target Name="Copy Mod" AfterTargets="PostBuildEvent" Condition="'$(SkipModCopy)' != 'true'">
     <Message Text="Copying mod to Slay the Spire 2 mods folder..." Importance="high" />
-    <MakeDir Directories="$(Sts2Dir)\mods\" />
-    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(Sts2Dir)\mods\$(MSBuildProjectName)\" />
+    <MakeDir Directories="$(Sts2Dir)/mods/" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(Sts2Dir)/mods/$(MSBuildProjectName)/" />
     <Copy SourceFiles="$(MSBuildProjectName).json" DestinationFolder="$(Sts2Dir)/mods/$(MSBuildProjectName)/" />
   </Target>
 </Project>
