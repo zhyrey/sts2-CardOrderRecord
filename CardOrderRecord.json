@@ -3,9 +3,9 @@
   "name": "Card Order Record",       
   "author": "zhyrey7",
   "description": "用于记录出牌顺序，方便玩家SL",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "min_game_version": "0.106.0", 
-  "has_pck": true,         
+  "has_pck": false,         
   "has_dll": true,        
   "dependencies": [],     
   "affects_gameplay": false
