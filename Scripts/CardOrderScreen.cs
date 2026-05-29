@@ -99,6 +99,8 @@ public partial class CardOrderScreen : Control, ICapstoneScreen
 
         VBoxContainer root = new()
         {
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
+            SizeFlagsVertical = SizeFlags.ExpandFill,
             MouseFilter = MouseFilterEnum.Ignore
         };
         root.AddThemeConstantOverride("separation", 18);
@@ -132,8 +134,10 @@ public partial class CardOrderScreen : Control, ICapstoneScreen
         {
             HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
             VerticalScrollMode = ScrollContainer.ScrollMode.Auto,
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
             SizeFlagsVertical = SizeFlags.ExpandFill,
-            MouseFilter = MouseFilterEnum.Pass
+            MouseFilter = MouseFilterEnum.Stop,
+            FollowFocus = true
         };
         root.AddChildSafely(scroll);
 
