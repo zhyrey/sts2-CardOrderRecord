@@ -2,8 +2,11 @@ using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.addons.mega_text;
 using MegaCrit.Sts2.Core.Logging;
+using MegaCrit.Sts2.Core.Multiplayer.Game;
 using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using MegaCrit.Sts2.Core.Nodes.Screens.PauseMenu;
+using MegaCrit.Sts2.Core.Runs;
+using MegaCrit.Sts2.Core.Saves;
 
 namespace COR.Scripts;
 
@@ -17,16 +20,38 @@ public static class PauseMenuPatch
         {
             Control buttonContainer = __instance.GetNode<Control>("%ButtonContainer");
             NPauseMenuButton saveAndQuitButton = buttonContainer.GetNode<NPauseMenuButton>("SaveAndQuit");
+            NPauseMenuButton giveUpButton = buttonContainer.GetNode<NPauseMenuButton>("GiveUp");
+            int giveUpIndex = giveUpButton.GetIndex();
+            int cardOrderIndex = giveUpIndex;
+
+            if (RunManager.Instance.NetService.Type == NetGameType.Singleplayer)
+            {
+                NPauseMenuButton quickRestartButton = (NPauseMenuButton)saveAndQuitButton.Duplicate();
+                quickRestartButton.Name = "QuickRestart";
+                MakeButtonVisualsUnique(quickRestartButton);
+                quickRestartButton.GetNode<MegaLabel>("Label").SetTextAutoSize("Quick Restart");
+
+                buttonContainer.AddChild(quickRestartButton);
+                buttonContainer.MoveChild(quickRestartButton, giveUpIndex);
+
+                quickRestartButton.Connect(
+                    NClickableControl.SignalName.Released,
+                    Callable.From<NButton>(OnQuickRestartPressed)
+                );
+
+                if (!SaveManager.Instance.HasRunSave)
+                    quickRestartButton.Disable();
+
+                cardOrderIndex = giveUpIndex + 1;
+            }
 
             NPauseMenuButton cardOrderButton = (NPauseMenuButton)saveAndQuitButton.Duplicate();
             cardOrderButton.Name = "CardOrder";
             MakeButtonVisualsUnique(cardOrderButton);
             cardOrderButton.GetNode<MegaLabel>("Label").SetTextAutoSize("Card Order");
 
-            NPauseMenuButton giveUpButton = buttonContainer.GetNode<NPauseMenuButton>("GiveUp");
-            int giveUpIndex = giveUpButton.GetIndex();
             buttonContainer.AddChild(cardOrderButton);
-            buttonContainer.MoveChild(cardOrderButton, giveUpIndex);
+            buttonContainer.MoveChild(cardOrderButton, cardOrderIndex);
 
             cardOrderButton.Connect(
                 NClickableControl.SignalName.Released,
@@ -46,6 +71,13 @@ public static class PauseMenuPatch
     {
         Log.Info("Card Order button pressed.");
         CardOrderScreen.Open();
+    }
+
+    private static void OnQuickRestartPressed(NButton button)
+    {
+        button.Disable();
+        Log.Info("Card Order quick restart button pressed.");
+        QuickSaveLoad.QuickLoad();
     }
 
     private static void MakeButtonVisualsUnique(NPauseMenuButton cardOrderButton)

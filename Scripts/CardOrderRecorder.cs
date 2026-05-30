@@ -44,22 +44,91 @@ public sealed record CardOrderEvent(
     PileType? DestinationPile = null
 );
 
+public enum CardOrderSourceKind
+{
+    Card,
+    Power,
+    Enchantment,
+    System,
+    Other
+}
+
+public sealed record CardOrderDisplayEvent(
+    int Sequence,
+    int RoundNumber,
+    CardOrderEventType Type,
+    CardModel Card,
+    string SourceName,
+    CardOrderSourceKind SourceKind,
+    bool FromHandDraw = false,
+    PileType? DestinationPile = null
+);
+
+public sealed record CardOrderHistoryEntry(
+    int Id,
+    IReadOnlyList<CardOrderDisplayEvent> Events
+);
+
 public static class CardOrderRecorder
 {
+    private const int MaxHistoryEntries = 20;
+
     private static readonly List<CardOrderEvent> Events = [];
     private static readonly Dictionary<CardModel, AbstractModel> SelectionSources = [];
+    private static readonly List<CardOrderHistoryEntry> HistoryEntries = [];
     private static int _sequence;
+    private static int _historyId;
     private static CardModel? _activePlayedCard;
+    private static ICombatState? _lastCombatState;
+    private static ICombatState? _quickRestartIgnoredCombatState;
+    private static bool _ignoreCombatHistoryClears;
 
     public static IReadOnlyList<CardOrderEvent> Records => Events;
+    public static IReadOnlyList<CardOrderHistoryEntry> History => HistoryEntries;
     public static AbstractModel? CurrentSource => _activePlayedCard;
 
     public static void Clear()
+    {
+        ArchiveCurrent();
+        ResetCurrent();
+    }
+
+    public static void StartQuickRestart(ICombatState? currentCombatState = null)
+    {
+        ArchiveCurrent();
+        _quickRestartIgnoredCombatState = currentCombatState ?? _lastCombatState;
+        ResetCurrent();
+        _ignoreCombatHistoryClears = true;
+    }
+
+    public static void FinishQuickRestart()
+    {
+        _ignoreCombatHistoryClears = false;
+    }
+
+    public static void ClearFromCombatHistory()
+    {
+        if (_ignoreCombatHistoryClears)
+        {
+            ResetCurrent();
+            return;
+        }
+
+        Clear();
+    }
+
+    private static void ResetCurrent()
     {
         Events.Clear();
         SelectionSources.Clear();
         _sequence = 0;
         _activePlayedCard = null;
+        _lastCombatState = null;
+    }
+
+    public static IReadOnlyList<CardOrderDisplayEvent> CurrentDisplayRecords()
+    {
+        return Events.Select(record => ToDisplayEvent(record, cloneCard: false)).ToList();
     }
 
     public static void RecordPlayed(ICombatState combatState, CardPlay cardPlay)
@@ -263,6 +332,10 @@ public static class CardOrderRecorder
         PileType? destinationPile = null
     )
     {
+        if (IsIgnoredCombatState(combatState))
+            return;
+
+        _lastCombatState = combatState;
         Events.Add(new CardOrderEvent(
             _sequence++,
             combatState.RoundNumber,
@@ -275,12 +348,85 @@ public static class CardOrderRecorder
         ));
     }
 
+    private static bool IsIgnoredCombatState(ICombatState combatState)
+    {
+        return _quickRestartIgnoredCombatState != null
+            && ReferenceEquals(combatState, _quickRestartIgnoredCombatState);
+    }
+
     private static AbstractModel? ResolveSource(CardModel card)
     {
         if (SelectionSources.Remove(card, out AbstractModel? source))
             return source;
 
         return _activePlayedCard;
+    }
+
+    private static void ArchiveCurrent()
+    {
+        if (Events.Count == 0)
+            return;
+
+        List<CardOrderDisplayEvent> snapshot = Events
+            .Select(record => ToDisplayEvent(record, cloneCard: true))
+            .ToList();
+
+        if (snapshot.Count == 0)
+            return;
+
+        HistoryEntries.Insert(0, new CardOrderHistoryEntry(++_historyId, snapshot));
+        while (HistoryEntries.Count > MaxHistoryEntries)
+            HistoryEntries.RemoveAt(HistoryEntries.Count - 1);
+    }
+
+    private static CardOrderDisplayEvent ToDisplayEvent(CardOrderEvent record, bool cloneCard)
+    {
+        return new CardOrderDisplayEvent(
+            record.Sequence,
+            record.RoundNumber,
+            record.Type,
+            cloneCard ? CloneCardForHistory(record.Card) : record.Card,
+            GetSourceName(record.Source),
+            GetSourceKind(record.Source),
+            record.FromHandDraw,
+            record.DestinationPile
+        );
+    }
+
+    private static CardModel CloneCardForHistory(CardModel card)
+    {
+        try
+        {
+            return CardModel.FromSerializable(card.ToSerializable());
+        }
+        catch
+        {
+            return card;
+        }
+    }
+
+    private static string GetSourceName(AbstractModel? source)
+    {
+        return source switch
+        {
+            CardModel card => card.Title,
+            PowerModel power => power.Title.GetFormattedText(),
+            EnchantmentModel enchantment => enchantment.Title.GetFormattedText(),
+            null => "System",
+            _ => source.Id.Entry
+        };
+    }
+
+    private static CardOrderSourceKind GetSourceKind(AbstractModel? source)
+    {
+        return source switch
+        {
+            CardModel => CardOrderSourceKind.Card,
+            PowerModel => CardOrderSourceKind.Power,
+            EnchantmentModel => CardOrderSourceKind.Enchantment,
+            null => CardOrderSourceKind.System,
+            _ => CardOrderSourceKind.Other
+        };
     }
 
     private static bool ShouldSuppressGenerated(CardModel card, AbstractModel? source)
@@ -392,7 +538,7 @@ public static class CombatHistoryClearPatch
     [HarmonyPostfix]
     public static void Postfix()
     {
-        CardOrderRecorder.Clear();
+        CardOrderRecorder.ClearFromCombatHistory();
     }
 }
 

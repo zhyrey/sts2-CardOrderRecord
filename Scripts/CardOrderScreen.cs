@@ -10,6 +10,7 @@ using MegaCrit.Sts2.Core.Nodes.CommonUi;
 using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using MegaCrit.Sts2.Core.Nodes.Screens;
 using MegaCrit.Sts2.Core.Nodes.Screens.Capstones;
+using MegaCrit.Sts2.Core.Nodes.Screens.PauseMenu;
 using MegaCrit.Sts2.Core.Nodes.Screens.RunHistoryScreen;
 using MegaCrit.Sts2.Core.Nodes.Screens.ScreenContext;
 
@@ -18,12 +19,18 @@ namespace COR.Scripts;
 public partial class CardOrderScreen : Control, ICapstoneScreen
 {
     private const float CompactCardEntryWidth = 150f;
+    private const float HistoryButtonWidth = 260f;
+    private const float HistoryButtonHeight = 64f;
 
-    private sealed record CardOrderEventGroup(CardOrderEvent Header, List<CardOrderEvent> Events);
+    private sealed record CardOrderEventGroup(CardOrderDisplayEvent Header, List<CardOrderDisplayEvent> Events);
 
     private readonly List<CardModel> _cards = [];
     private VBoxContainer _content = null!;
+    private VBoxContainer _historyList = null!;
     private NBackButton _backButton = null!;
+    private NPauseMenuButton _historyButton = null!;
+    private bool _historyListVisible;
+    private int? _selectedHistoryId;
 
     public NetScreenType ScreenType => NetScreenType.None;
 
@@ -135,6 +142,15 @@ public partial class CardOrderScreen : Control, ICapstoneScreen
         this.AddChildSafely(_backButton);
         _backButton.CallDeferred(NButton.MethodName.Enable);
 
+        HBoxContainer body = new()
+        {
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
+            SizeFlagsVertical = SizeFlags.ExpandFill,
+            MouseFilter = MouseFilterEnum.Ignore
+        };
+        body.AddThemeConstantOverride("separation", 24);
+        root.AddChildSafely(body);
+
         ScrollContainer scroll = new()
         {
             HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
@@ -144,7 +160,7 @@ public partial class CardOrderScreen : Control, ICapstoneScreen
             MouseFilter = MouseFilterEnum.Stop,
             FollowFocus = true
         };
-        root.AddChildSafely(scroll);
+        body.AddChildSafely(scroll);
 
         _content = new VBoxContainer
         {
@@ -153,6 +169,40 @@ public partial class CardOrderScreen : Control, ICapstoneScreen
         };
         _content.AddThemeConstantOverride("separation", 18);
         scroll.AddChildSafely(_content);
+
+        VBoxContainer historySidebar = new()
+        {
+            CustomMinimumSize = new Vector2(HistoryButtonWidth, 1f),
+            SizeFlagsHorizontal = SizeFlags.ShrinkEnd,
+            SizeFlagsVertical = SizeFlags.ExpandFill,
+            MouseFilter = MouseFilterEnum.Ignore
+        };
+        historySidebar.AddThemeConstantOverride("separation", 8);
+        body.AddChildSafely(historySidebar);
+
+        _historyButton = CreateHistoryToggleButton("History");
+        _historyButton.Connect(NClickableControl.SignalName.Released, Callable.From<NClickableControl>(_ => ToggleHistoryList()));
+        historySidebar.AddChildSafely(_historyButton);
+
+        ScrollContainer historyScroll = new()
+        {
+            Visible = false,
+            HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
+            VerticalScrollMode = ScrollContainer.ScrollMode.Auto,
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
+            SizeFlagsVertical = SizeFlags.ExpandFill,
+            MouseFilter = MouseFilterEnum.Stop,
+            FollowFocus = true
+        };
+        historySidebar.AddChildSafely(historyScroll);
+
+        _historyList = new VBoxContainer
+        {
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
+            MouseFilter = MouseFilterEnum.Ignore
+        };
+        _historyList.AddThemeConstantOverride("separation", 2);
+        historyScroll.AddChildSafely(_historyList);
     }
 
     private void Populate()
@@ -160,14 +210,76 @@ public partial class CardOrderScreen : Control, ICapstoneScreen
         _content.FreeChildren();
         _cards.Clear();
 
-        IReadOnlyList<CardOrderEvent> records = CardOrderRecorder.Records;
+        if (_selectedHistoryId != null)
+        {
+            CardOrderHistoryEntry? selected = CardOrderRecorder.History
+                .FirstOrDefault(entry => entry.Id == _selectedHistoryId.Value);
+            if (selected != null)
+            {
+                _content.AddChildSafely(CreateHeaderLabel($"History {selected.Id}"));
+                PopulateRecordSet(selected.Events);
+                RefreshHistoryList();
+                return;
+            }
+
+            _selectedHistoryId = null;
+        }
+
+        IReadOnlyList<CardOrderDisplayEvent> records = CardOrderRecorder.CurrentDisplayRecords();
         if (records.Count == 0)
         {
             _content.AddChildSafely(CreateHeaderLabel("No card events have been recorded in this combat."));
+            RefreshHistoryList();
             return;
         }
 
-        foreach (IGrouping<int, CardOrderEvent> round in records.GroupBy(record => record.RoundNumber))
+        PopulateRecordSet(records);
+        RefreshHistoryList();
+    }
+
+    private void RefreshHistoryList()
+    {
+        SetPauseMenuButtonLabel(_historyButton, _historyListVisible ? "Hide" : "History");
+
+        _historyList.GetParent<Control>().Visible = _historyListVisible;
+        _historyList.FreeChildren();
+
+        if (!_historyListVisible)
+            return;
+
+        NPauseMenuButton currentButton = CreateHistoryListButton("Current");
+        currentButton.Connect(NClickableControl.SignalName.Released, Callable.From<NClickableControl>(_ =>
+        {
+            _selectedHistoryId = null;
+            Populate();
+        }));
+        _historyList.AddChildSafely(currentButton);
+        ApplyHistoryButtonSelection(currentButton, _selectedHistoryId == null);
+
+        IReadOnlyList<CardOrderHistoryEntry> history = CardOrderRecorder.History;
+        if (history.Count == 0)
+        {
+            _historyList.AddChildSafely(CreateSideLabel("No history"));
+            return;
+        }
+
+        foreach (CardOrderHistoryEntry entry in history)
+        {
+            int historyId = entry.Id;
+            NPauseMenuButton historyEntryButton = CreateHistoryListButton($"History {historyId}");
+            historyEntryButton.Connect(NClickableControl.SignalName.Released, Callable.From<NClickableControl>(_ =>
+            {
+                _selectedHistoryId = historyId;
+                Populate();
+            }));
+            _historyList.AddChildSafely(historyEntryButton);
+            ApplyHistoryButtonSelection(historyEntryButton, _selectedHistoryId == historyId);
+        }
+    }
+
+    private void PopulateRecordSet(IReadOnlyList<CardOrderDisplayEvent> records)
+    {
+        foreach (IGrouping<int, CardOrderDisplayEvent> round in records.GroupBy(record => record.RoundNumber))
         {
             _content.AddChildSafely(CreateHeaderLabel($"Turn {round.Key}"));
 
@@ -184,11 +296,11 @@ public partial class CardOrderScreen : Control, ICapstoneScreen
         }
     }
 
-    private static List<CardOrderEventGroup> GroupEvents(IEnumerable<CardOrderEvent> records)
+    private static List<CardOrderEventGroup> GroupEvents(IEnumerable<CardOrderDisplayEvent> records)
     {
         List<CardOrderEventGroup> groups = [];
 
-        foreach (CardOrderEvent record in records)
+        foreach (CardOrderDisplayEvent record in records)
         {
             CardOrderEventGroup? previous = groups.LastOrDefault();
             if (CanGroup(previous, record))
@@ -203,32 +315,25 @@ public partial class CardOrderScreen : Control, ICapstoneScreen
         return groups;
     }
 
-    private static bool CanGroup(CardOrderEventGroup? group, CardOrderEvent record)
+    private static bool CanGroup(CardOrderEventGroup? group, CardOrderDisplayEvent record)
     {
         if (group == null || record.Type == CardOrderEventType.Played)
             return false;
 
-        CardOrderEvent header = group.Header;
+        CardOrderDisplayEvent header = group.Header;
         if (header.Type == CardOrderEventType.Played)
             return false;
 
         return header.Type == record.Type
             && header.FromHandDraw == record.FromHandDraw
             && header.DestinationPile == record.DestinationPile
-            && SameSource(header.Source, record.Source);
-    }
-
-    private static bool SameSource(AbstractModel? left, AbstractModel? right)
-    {
-        if (left == null || right == null)
-            return left == right;
-
-        return left.Id.Equals(right.Id);
+            && header.SourceKind == record.SourceKind
+            && header.SourceName == record.SourceName;
     }
 
     private Control CreateEventRow(CardOrderEventGroup group)
     {
-        CardOrderEvent record = group.Header;
+        CardOrderDisplayEvent record = group.Header;
         HBoxContainer row = new()
         {
             SizeFlagsHorizontal = SizeFlags.ExpandFill,
@@ -245,7 +350,7 @@ public partial class CardOrderScreen : Control, ICapstoneScreen
             };
             row.AddChildSafely(indent);
 
-            row.AddChildSafely(CreateSourceLabel(record.Source));
+            row.AddChildSafely(CreateSourceLabel(record.SourceName, record.SourceKind));
         }
 
         row.AddChildSafely(CreateEventBadge(record));
@@ -259,7 +364,7 @@ public partial class CardOrderScreen : Control, ICapstoneScreen
         cardContainer.AddThemeConstantOverride("v_separation", 4);
         row.AddChildSafely(cardContainer);
 
-        foreach (CardOrderEvent groupedRecord in group.Events)
+        foreach (CardOrderDisplayEvent groupedRecord in group.Events)
             cardContainer.AddChildSafely(CreateCardEntry(groupedRecord.Card));
 
         return row;
@@ -291,19 +396,19 @@ public partial class CardOrderScreen : Control, ICapstoneScreen
             labelContainer.OffsetRight = CompactCardEntryWidth;
     }
 
-    private Label CreateSourceLabel(AbstractModel? source)
+    private Label CreateSourceLabel(string sourceName, CardOrderSourceKind sourceKind)
     {
         Font? font = ResourceLoader.Load<Font>("res://themes/kreon_regular_shared.tres");
         Label label = new()
         {
-            Text = GetSourceName(source),
+            Text = sourceName,
             CustomMinimumSize = new Vector2(230f, 32f),
             MouseFilter = MouseFilterEnum.Ignore,
             VerticalAlignment = VerticalAlignment.Center,
             HorizontalAlignment = HorizontalAlignment.Right,
             TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis
         };
-        label.AddThemeColorOverride("font_color", GetSourceColor(source));
+        label.AddThemeColorOverride("font_color", GetSourceColor(sourceKind));
         label.AddThemeColorOverride("font_shadow_color", new Color(0f, 0f, 0f, 0.75f));
         label.AddThemeConstantOverride("shadow_offset_x", 2);
         label.AddThemeConstantOverride("shadow_offset_y", 1);
@@ -313,7 +418,7 @@ public partial class CardOrderScreen : Control, ICapstoneScreen
         return label;
     }
 
-    private Label CreateEventBadge(CardOrderEvent record)
+    private Label CreateEventBadge(CardOrderDisplayEvent record)
     {
         Font? font = ResourceLoader.Load<Font>("res://themes/kreon_regular_shared.tres");
         Label label = new()
@@ -334,7 +439,7 @@ public partial class CardOrderScreen : Control, ICapstoneScreen
         return label;
     }
 
-    private static string GetEventLabel(CardOrderEvent record)
+    private static string GetEventLabel(CardOrderDisplayEvent record)
     {
         return record.Type switch
         {
@@ -373,26 +478,14 @@ public partial class CardOrderScreen : Control, ICapstoneScreen
         };
     }
 
-    private static string GetSourceName(AbstractModel? source)
+    private static Color GetSourceColor(CardOrderSourceKind sourceKind)
     {
-        return source switch
+        return sourceKind switch
         {
-            CardModel card => card.Title,
-            PowerModel power => power.Title.GetFormattedText(),
-            EnchantmentModel enchantment => enchantment.Title.GetFormattedText(),
-            null => "System",
-            _ => source.Id.Entry
-        };
-    }
-
-    private static Color GetSourceColor(AbstractModel? source)
-    {
-        return source switch
-        {
-            CardModel => new Color(1f, 0.839216f, 0.211765f),
-            PowerModel => new Color(0.65f, 0.95f, 1f),
-            EnchantmentModel => new Color(0.75f, 0.65f, 1f),
-            null => new Color(0.8f, 0.8f, 0.8f),
+            CardOrderSourceKind.Card => new Color(1f, 0.839216f, 0.211765f),
+            CardOrderSourceKind.Power => new Color(0.65f, 0.95f, 1f),
+            CardOrderSourceKind.Enchantment => new Color(0.75f, 0.65f, 1f),
+            CardOrderSourceKind.System => new Color(0.8f, 0.8f, 0.8f),
             _ => new Color(1f, 0.964706f, 0.886275f)
         };
     }
@@ -439,6 +532,76 @@ public partial class CardOrderScreen : Control, ICapstoneScreen
         if (font != null)
             label.AddThemeFontOverride("font", font);
         return label;
+    }
+
+    private NPauseMenuButton CreateHistoryToggleButton(string text)
+    {
+        PackedScene buttonScene = ResourceLoader.Load<PackedScene>("res://scenes/pause_menu/pause_menu_button.tscn");
+        NPauseMenuButton button = buttonScene.Instantiate<NPauseMenuButton>(PackedScene.GenEditState.Disabled);
+        button.CustomMinimumSize = new Vector2(HistoryButtonWidth, HistoryButtonHeight);
+        button.FocusMode = FocusModeEnum.All;
+        button.MouseFilter = MouseFilterEnum.Stop;
+        MakePauseMenuButtonVisualsUnique(button);
+        SetPauseMenuButtonLabel(button, text);
+        return button;
+    }
+
+    private NPauseMenuButton CreateHistoryListButton(string text)
+    {
+        NPauseMenuButton button = CreateHistoryToggleButton(text);
+        button.SizeFlagsHorizontal = SizeFlags.ShrinkEnd;
+        return button;
+    }
+
+    private static void ApplyHistoryButtonSelection(NPauseMenuButton button, bool selected)
+    {
+        MegaLabel? label = button.GetNodeOrNull<MegaLabel>("Label");
+        if (label == null)
+            return;
+
+        label.AddThemeColorOverride(
+            "font_color",
+            selected ? new Color(1f, 0.839216f, 0.211765f) : new Color(1f, 0.964706f, 0.886275f)
+        );
+    }
+
+    private static void SetPauseMenuButtonLabel(NPauseMenuButton button, string text)
+    {
+        MegaLabel? label = button.GetNodeOrNull<MegaLabel>("Label");
+        if (label != null)
+            label.SetTextAutoSize(text);
+    }
+
+    private static void MakePauseMenuButtonVisualsUnique(NPauseMenuButton button)
+    {
+        TextureRect? buttonImage = button.GetNodeOrNull<TextureRect>("ButtonImage");
+        if (buttonImage?.Material is ShaderMaterial material)
+            buttonImage.Material = (ShaderMaterial)material.Duplicate();
+    }
+
+    private Label CreateSideLabel(string text)
+    {
+        Font? font = ResourceLoader.Load<Font>("res://themes/kreon_regular_shared.tres");
+        Label label = new()
+        {
+            Text = text,
+            MouseFilter = MouseFilterEnum.Ignore,
+            HorizontalAlignment = HorizontalAlignment.Center
+        };
+        label.AddThemeColorOverride("font_color", new Color(1f, 0.964706f, 0.886275f));
+        label.AddThemeColorOverride("font_shadow_color", new Color(0f, 0f, 0f, 0.75f));
+        label.AddThemeConstantOverride("shadow_offset_x", 2);
+        label.AddThemeConstantOverride("shadow_offset_y", 1);
+        label.AddThemeFontSizeOverride("font_size", 18);
+        if (font != null)
+            label.AddThemeFontOverride("font", font);
+        return label;
+    }
+
+    private void ToggleHistoryList()
+    {
+        _historyListVisible = !_historyListVisible;
+        RefreshHistoryList();
     }
 
     private void ShowCard(int index)
