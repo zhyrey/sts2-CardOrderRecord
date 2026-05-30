@@ -2,3 +2,4 @@
 .godot/
 /android/
 .verify-sts2/
+.release/
