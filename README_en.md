@@ -114,4 +114,4 @@ The build scripts try to auto-detect the Steam Library that contains `Slay the S
 
 ## License
 
-No open-source license has been declared yet. Please contact the author before reusing, modifying, or redistributing this project.
+This project is released under the [MIT License](LICENSE).
