@@ -93,6 +93,15 @@ public static class CardOrderRecorder
         ResetCurrent();
     }
 
+    public static void ClearCombatSession()
+    {
+        ResetCurrent();
+        HistoryEntries.Clear();
+        _historyId = 0;
+        _quickRestartIgnoredCombatState = null;
+        _ignoreCombatHistoryClears = false;
+    }
+
     public static void StartQuickRestart(ICombatState? currentCombatState = null)
     {
         ArchiveCurrent();
@@ -539,6 +548,38 @@ public static class CombatHistoryClearPatch
     public static void Postfix()
     {
         CardOrderRecorder.ClearFromCombatHistory();
+    }
+}
+
+[HarmonyPatch(typeof(CombatManager), nameof(CombatManager.EndCombatInternal))]
+public static class CombatEndPatch
+{
+    [HarmonyPostfix]
+    public static void Postfix(ref Task __result)
+    {
+        __result = ClearAfterCombatEnds(__result);
+    }
+
+    private static async Task ClearAfterCombatEnds(Task resultTask)
+    {
+        try
+        {
+            await resultTask;
+        }
+        finally
+        {
+            CardOrderRecorder.ClearCombatSession();
+        }
+    }
+}
+
+[HarmonyPatch(typeof(CombatManager), "ProcessPendingLoss")]
+public static class CombatLossPatch
+{
+    [HarmonyPostfix]
+    public static void Postfix()
+    {
+        CardOrderRecorder.ClearCombatSession();
     }
 }
 
